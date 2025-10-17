@@ -1,0 +1,25 @@
+name: bullmq
+services:
+  redis:
+    image: redis:6.2.6
+    container_name: bullmq-redis
+    command:
+      - redis-server
+      - --appendonly yes
+    ports:
+      - '6379:6379'
+    volumes:
+      - 'bullmq-redis:/data'
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bullmq-network
+volumes:
+  bullmq-redis:
+    driver: local
+networks:
+  bullmq-network:
+    driver: bridge

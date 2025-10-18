@@ -1,15 +1,22 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import * as z from 'zod/mini';
 import { Job, Queue } from 'bullmq';
 import type { RepeatOptions, Processor } from 'bullmq';
-import { match } from 'ts-pattern';
-import { dogstatsd } from 'dd-trace';
+import {
+  calculateTotalSlots,
+  DEFAULT_CADENCE,
+  type CycleTime,
+} from './slots/calculate-slots';
+import type { Logger } from '../logger';
 
 type BaseScheduleOptions = Omit<RepeatOptions, 'key' | 'every' | 'repeat'>;
 
-type CycleTime = 'hour' | 'day' | 'week';
+const CacheValue = z.object({
+  slot: z.number(),
+  processedCount: z.number(),
+});
 
-const DEFAULT_CYCLE_TIME = 'day';
-
-const DEFAULT_CADENCE = 1000 * 60 * 5; // 5 minutes
+type CacheValue = z.infer<typeof CacheValue>;
 
 /**
  * Options for creating a distributed batch job scheduler.
@@ -18,19 +25,19 @@ const DEFAULT_CADENCE = 1000 * 60 * 5; // 5 minutes
  */
 export interface ScheduleOptions extends BaseScheduleOptions {
   /** unique id for the batch job, if running multiple jobs on the same queue you must specify unique
-   * ids for each job
+   * ids for each batch processor
    */
   id: string;
-
-  /** How often the job should run, defaults to every 300000 milliseconds (5 minutes) */
-  everyMs?: number;
 
   /**
    * How often the complete dataset should be processed. This is not a guarantee that it will be processed
    * but a reasonable upper bound for how long it will take to cycle back to the same item in the processCallback
    * defaults to daily
    */
-  cycleTime?: CycleTime;
+  cycleTime: CycleTime;
+
+  /** How often the job should run, defaults to every 300000 milliseconds (5 minutes) */
+  everyMs?: number;
 
   /**
    * If true, the job will run through one complete cycle of all slots and then stop.
@@ -38,9 +45,6 @@ export interface ScheduleOptions extends BaseScheduleOptions {
    * @default false (run indefinitely)
    */
   runOnce?: boolean;
-
-  /** The queue name for this job, used for stop condition processing. */
-  queueName?: string;
 }
 
 /**
@@ -58,7 +62,7 @@ export interface JobConfig extends Pick<ScheduleOptions, 'cycleTime'> {
 /**
  * Lifecycle hooks for distributed batch processor.
  */
-interface LifecycleHooks<JobData, JobName extends string> {
+interface LifecycleHooks<JobData, JobName extends string = string> {
   /** Called once when the processor starts its very first run (processedCount = 0) */
   onStart?: (job: Job<JobData, unknown, JobName>) => Promise<void> | void;
   /** Called at the beginning of each batch/slot processing cycle */
@@ -99,7 +103,7 @@ export interface ProcessorConfig<
       totalSlots: number;
     },
     job: Job<JobData, unknown, JobName>,
-  ) => AsyncIterable<ProcessorData>;
+  ) => AsyncIterable<ProcessorData> | Promise<AsyncIterable<ProcessorData>>;
   /** Function that processes each individual data item. */
   processCallback: (
     data: ProcessorData,
@@ -126,6 +130,12 @@ export interface DistributedJobResult {
   processedCount: number;
 }
 
+interface DistributedBatchProcessorConstructorArgs {
+  queue: Queue;
+  options: ScheduleOptions;
+  logger?: Logger;
+}
+
 /**
  * Creates BullMQ processors that distribute work across time slots to prevent overwhelming systems.
  *
@@ -137,6 +147,49 @@ export interface DistributedJobResult {
  * the workload across 4 time windows.
  */
 export class DistributedBatchProcessor {
+  #queue: Queue;
+  #scheduleOptions: ScheduleOptions;
+  #logger?: Logger;
+  #cacheKey: string;
+
+  constructor({
+    queue,
+    options,
+    logger,
+  }: DistributedBatchProcessorConstructorArgs) {
+    this.#queue = queue;
+    this.#scheduleOptions = options;
+    this.#logger = logger;
+    this.#cacheKey = `${this.#scheduleOptions.id}:slot-cache`;
+  }
+
+  async getBatchJobState() {
+    const redisClient = await this.#queue.client;
+
+    const val = await redisClient.get(this.#cacheKey);
+    return CacheValue.safeParse(val === null ? {} : JSON.parse(val));
+  }
+
+  async setBatchJobState(state: CacheValue) {
+    const redisClient = await this.#queue.client;
+    return redisClient.set(this.#cacheKey, JSON.stringify(state));
+  }
+
+  /**
+   * A helper function to safely call a function and log any errors.
+   * will not throw an error if the function fails.
+   */
+  async #calllWithErrorMsg(
+    fn: (...args: any[]) => Promise<any> | any,
+    errorMessage: string,
+  ) {
+    try {
+      return await fn();
+    } catch (err) {
+      this.#logger?.error({ err }, errorMessage);
+    }
+  }
+
   /**
    * Creates a BullMQ processor that distributes work across time slots.
    *
@@ -181,168 +234,18 @@ export class DistributedBatchProcessor {
    * });
    * ```
    */
-  static build<
-    ProcessorData,
-    JobData extends JobConfig,
-    JobName extends string,
-  >(
+  async build<ProcessorData, JobData extends JobConfig, JobName extends string>(
     config: ProcessorConfig<ProcessorData, JobData, JobName>,
-  ): Processor<JobData, DistributedJobResult, JobName> {
+  ): Promise<Processor<JobData, DistributedJobResult, JobName>> {
+    let slot = 0;
     let processedCount = 0;
-    return async (job) => {
-      const startTime = Date.now();
-
-      const everyMs = job.opts.repeat?.every;
-      if (!everyMs) {
-        throw new Error(
-          'DistributedBatchProcessor:build: Invalid job configuration, must provide `repeat.every` option',
-        );
-      }
-
-      processedCount = job.data.processedCount ?? processedCount;
-
-      const totalSlots = calculateTotalSlots({
-        cycleTime: job.data.cycleTime,
-        everyMs,
-      });
-
-      // Start from slot 0, cycle through all slots over time
-      const slot = job.data.slot ?? 0;
-
-      let processingTimeMs = 0;
-
-      // Call onStart hook only on the first run
-      if (!processedCount) {
-        try {
-          await config.hooks?.onStart?.(job);
-        } catch (err) {
-          console.error('DistributedBatchProcessor onStart hook failed:', err);
-        }
-      }
-
-      let processingError: Error | null = null;
-
-      try {
-        // Call onStartBatch hook
-        try {
-          await config.hooks?.onStartBatch?.(job);
-        } catch (err) {
-          console.error(
-            'DistributedBatchProcessor onStartBatch hook failed:',
-            err,
-          );
-        }
-
-        for await (const record of config.dataCallback(
-          {
-            currentSlot: slot,
-            totalSlots,
-          },
-          job,
-        )) {
-          processedCount++;
-          await config.processCallback(record, job);
-        }
-
-        // Track processing time on success
-        processingTimeMs = Date.now() - startTime;
-
-        // Call onComplete hook - don't let hook errors fail the job
-        try {
-          await config.hooks?.onCompleteBatch?.(job);
-        } catch (err) {
-          console.error(
-            'DistributedBatchProcessor onCompleteBatch hook failed:',
-            err,
-          );
-        }
-      } catch (err) {
-        processingError = err as Error;
-        processingTimeMs = Date.now() - startTime;
-
-        // ensure to bump slot even in case of an error
-        await job.updateData({
-          ...job.data,
-          processedCount,
-          slot: (slot + 1) % totalSlots,
-        });
-
-        await config.hooks?.onError?.(err, job);
-
-        throw processingError;
-      }
-
-      // ensure to bump slot even in case of an error
-      await job.updateData({
-        ...job.data,
-        processedCount,
-        slot: (slot + 1) % totalSlots,
-      });
-
-      // Check stop condition
-      if (config.stopCondition) {
-        const shouldStop = await config.stopCondition(
-          {
-            processedCount,
-            currentSlot: slot,
-            totalSlots,
-          },
-          job,
-        );
-
-        if (shouldStop) {
-          // Create a new queue instance to remove the job scheduler
-          const queue = new Queue(job.queueName);
-          await queue.removeJobScheduler(job.opts.jobId!);
-          await queue.close();
-
-          // Call onComplete hook - don't let hook errors fail anything
-          try {
-            await config.hooks?.onComplete?.(job);
-          } catch (err) {
-            console.error(
-              'DistributedBatchProcessor onComplete hook failed:',
-              err,
-            );
-          }
-        }
-      }
-
-      // call at the end of run once
-      if (job.opts.repeat?.limit === totalSlots) {
-        // Call onComplete hook - don't let hook errors fail anything
-        try {
-          await config.hooks?.onComplete?.(job);
-        } catch (err) {
-          console.error(
-            'DistributedBatchProcessor onComplete hook failed:',
-            err,
-          );
-        }
-      }
-
-      // Track processing time with histogram metric
-      dogstatsd.histogram(
-        'distributed_batch_processor.processing_time',
-        processingTimeMs,
-        {
-          job_name: job.name || 'unknown',
-          slot: slot.toString(),
-          total_slots: totalSlots.toString(),
-          processed_count: processedCount.toString(),
-        },
-      );
-
-      return { processedCount };
-    };
-  }
-
-  /**
-   * initializes a job scheduler for the distributed batch processer
-   */
-  static schedule(queue: Queue, opts: ScheduleOptions) {
+    const opts = this.#scheduleOptions;
+    const queue = this.#queue;
     const totalSlots = calculateTotalSlots(opts);
-    return queue.upsertJobScheduler(
+
+    await this.setBatchJobState({ slot: 0, processedCount: 0 });
+
+    await queue.upsertJobScheduler(
       opts.id,
       {
         ...opts,
@@ -356,25 +259,115 @@ export class DistributedBatchProcessor {
         },
       },
     );
+
+    return async (job) => {
+      const everyMs = job.opts.repeat?.every;
+      if (!everyMs) {
+        throw new Error(
+          'DistributedBatchProcessor:build: Invalid job configuration, must provide `repeat.every` option',
+        );
+      }
+
+      const result = await this.getBatchJobState();
+
+      // if we can't get the cache value, set to default values so we get values on the next turn
+      if (result.success) {
+        slot = result.data.slot;
+        processedCount = result.data.processedCount;
+      } else {
+        slot = 0;
+        processedCount = 0;
+      }
+
+      const totalSlots = calculateTotalSlots({
+        cycleTime: job.data.cycleTime,
+        everyMs,
+      });
+
+      // Call onStart hook only on the first run
+      if (!processedCount) {
+        await this.#calllWithErrorMsg(
+          () => config.hooks?.onStart?.(job),
+          'DistributedBatchProcessor onStart hook failed',
+        );
+      }
+
+      // cache the current slot in redis to preserve state between slots
+      const setCache = (nextSlot: number, currentProcessedCount: number) => {
+        return this.setBatchJobState({
+          processedCount: currentProcessedCount,
+          slot: nextSlot,
+        });
+      };
+
+      try {
+        // Call onStartBatch hook
+        await this.#calllWithErrorMsg(
+          () => config.hooks?.onStartBatch?.(job),
+          'DistributedBatchProcessor onStartBatch hook failed',
+        );
+
+        const dataIterable = await config.dataCallback(
+          {
+            currentSlot: slot,
+            totalSlots,
+          },
+          job,
+        );
+
+        for await (const record of dataIterable) {
+          processedCount++;
+          await config.processCallback(record, job);
+        }
+
+        await this.#calllWithErrorMsg(
+          () => config.hooks?.onCompleteBatch?.(job),
+          'DistributedBatchProcessor onCompleteBatch hook failed',
+        );
+      } catch (err) {
+        await this.#calllWithErrorMsg(
+          () => config.hooks?.onError?.(err, job),
+          'DistributedBatchProcessor onError hook failed',
+        );
+
+        // Update cache with next slot after error
+        await setCache((slot + 1) % totalSlots, processedCount);
+        throw err;
+      }
+
+      // Update cache with next slot after successful processing
+      await setCache((slot + 1) % totalSlots, processedCount);
+
+      // Some processors may define an arbitrary stop condition
+      if (config.stopCondition) {
+        const shouldStop = await config.stopCondition(
+          {
+            processedCount,
+            currentSlot: slot,
+            totalSlots,
+          },
+          job,
+        );
+
+        if (shouldStop) {
+          await this.#queue.removeJobScheduler(job.opts.jobId!);
+          this.#calllWithErrorMsg(
+            () => config.hooks?.onComplete?.(job),
+            'DistributedBatchProcessor onComplete hook failed on stop condition',
+          );
+          return { processedCount };
+        }
+      }
+
+      // call at the end of run once
+      if (job.opts.repeat?.limit === totalSlots) {
+        this.#calllWithErrorMsg(
+          () => config.hooks?.onComplete?.(job),
+          'DistributedBatchProcessor onComplete hook failed on the last slot',
+        );
+      }
+
+      return { processedCount };
+    };
   }
-}
-
-// Calculate how many job executions fit in the cycle time
-// This ensures every record is processed at least once per cycle
-function calculateTotalSlots({
-  cycleTime = DEFAULT_CYCLE_TIME,
-  everyMs = DEFAULT_CADENCE,
-}: {
-  cycleTime?: CycleTime;
-  everyMs?: number;
-}) {
-  const cycleTimeHours = match(cycleTime)
-    .with('hour', () => 1)
-    .with('day', () => 24)
-    .with('week', () => 24 * 7)
-    .exhaustive();
-
-  // Calculate how many job executions fit in the cycle time
-  // This ensures every record is processed at least once per cycle
-  return Math.ceil((cycleTimeHours * 60 * 60 * 1000) / everyMs);
 }

@@ -1,5 +1,6 @@
 {
-  "name": "bullmq",
+  "name": "matador",
+  "description": "High level APIs for bullmq",
   "version": "1.0.0",
   "type": "module",
   "exports": {
@@ -28,6 +29,7 @@
     "bullmq": "^5.61.0",
     "eslint": "^9.35.0",
     "globals": "^16.3.0",
+    "ioredis": "^5.4.1",
     "prettier": "^3.6.2",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.43.0",
@@ -39,6 +41,7 @@
   "private": true,
   "dependencies": {
     "dd-trace": "^5.72.0",
-    "ts-pattern": "^5.8.0"
+    "ts-pattern": "^5.8.0",
+    "zod": "^4.1.12"
   }
 }

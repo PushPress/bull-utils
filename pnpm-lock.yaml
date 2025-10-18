@@ -14,6 +14,9 @@ importers:
       ts-pattern:
         specifier: ^5.8.0
         version: 5.8.0
+      zod:
+        specifier: ^4.1.12
+        version: 4.1.12
     devDependencies:
       '@eslint/js':
         specifier: ^9.35.0
@@ -33,6 +36,9 @@ importers:
       globals:
         specifier: ^16.3.0
         version: 16.4.0
+      ioredis:
+        specifier: ^5.4.1
+        version: 5.8.1
       prettier:
         specifier: ^3.6.2
         version: 3.6.2
@@ -1620,6 +1626,9 @@ packages:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
 
+  zod@4.1.12:
+    resolution: {integrity: sha512-JInaHOamG8pt5+Ey8kGmdcAcg3OL9reK8ltczgHTAwNhMys/6ThXHityHxVV2p3fkw/c+MAvBHFVYHFZDmjMCQ==}
+
 snapshots:
 
   '@ast-grep/napi-darwin-arm64@0.37.0':
@@ -3081,3 +3090,5 @@ snapshots:
   word-wrap@1.2.5: {}
 
   yocto-queue@0.1.0: {}
+
+  zod@4.1.12: {}

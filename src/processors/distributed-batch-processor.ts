@@ -20,8 +20,8 @@ type CacheValue = z.infer<typeof CacheValue>;
 
 /**
  * Options for creating a distributed batch job scheduler.
- * extends the RepeatOptions from bullmq
- * advanced configuration includes a custom start date and a limited
+ * Extends the RepeatOptions from BullMQ with additional configuration
+ * for distributed processing including cycle time and execution limits.
  */
 export interface ScheduleOptions extends BaseScheduleOptions {
   /** unique id for the batch job, if running multiple jobs on the same queue you must specify unique
@@ -143,7 +143,10 @@ interface DistributedBatchProcessorConstructorArgs {
  * for its assigned slot, then updates to the next slot for subsequent runs. This allows
  * large datasets to be processed in smaller, distributed batches over time.
  *
- * Example: With totalSlots=4, jobs will process slots 1→2→3→0→1... distributing
+ * The processor automatically manages slot progression and state persistence via Redis,
+ * ensuring reliable distribution even across job restarts.
+ *
+ * Example: With totalSlots=4, jobs will process slots 0→1→2→3→0→1... distributing
  * the workload across 4 time windows.
  */
 export class DistributedBatchProcessor {
@@ -179,7 +182,7 @@ export class DistributedBatchProcessor {
    * A helper function to safely call a function and log any errors.
    * will not throw an error if the function fails.
    */
-  async #calllWithErrorMsg(
+  async #callWithErrorMsg(
     fn: (...args: any[]) => Promise<any> | any,
     errorMessage: string,
   ) {
@@ -194,44 +197,31 @@ export class DistributedBatchProcessor {
    * Creates a BullMQ processor that distributes work across time slots.
    *
    * @param config - Configuration object containing callbacks and options
-   * @returns A BullMQ processor function that can be used with fastify.createWorker()
+   * @returns A BullMQ processor function that can be used with queue.add() or worker processors
    *
    * @example
    * ```typescript
-   * // Example using paginate helper to return an async iterable
-   * const processor = DistributedBatchProcessor.build({
-   *   dataCallback: ({ currentSlot, totalSlots }) => {
-   *     return paginate(
-   *       async ({ limit, offset }) => {
-   *         const data = await db
-   *           .selectFrom("users")
-   *           .select(["id", "email", "name"])
-   *           .where("status", "=", "active")
-   *           .where(sql`MOD(CRC32(id), ${totalSlots})`, "=", currentSlot)
-   *           .orderBy("id")
-   *           .limit(limit)
-   *           .offset(offset ?? 0)
-   *           .execute();
+   * // Create a processor instance
+   * const processor = new DistributedBatchProcessor({
+   *   queue,
+   *   options: {
+   *     id: 'user-notifications',
+   *     cycleTime: 'day',
+   *   },
+   * });
    *
-   *         return {
-   *           items: data,
-   *           pageInfo: {
-   *             hasNextPage: data.length === limit,
-   *           },
-   *         };
-   *       },
-   *       {
-   *         strategy: "offset",
-   *         limit: 100,
-   *         errorPolicy: { type: "throw" },
-   *       }
-   *     );
+   * // Build the processor function
+   * const processorFn = await processor.build({
+   *   dataCallback: ({ currentSlot, totalSlots }) => {
+   *     return fetchDataForSlot(currentSlot, totalSlots);
    *   },
    *   processCallback: async (user) => {
    *     await sendNotificationEmail(user.email);
    *   },
-   *   cycleTime: "day"
    * });
+   *
+   * // Use with BullMQ worker
+   * worker.add('user-notifications', processorFn);
    * ```
    */
   async build<ProcessorData, JobData extends JobConfig, JobName extends string>(
@@ -281,7 +271,7 @@ export class DistributedBatchProcessor {
 
       // Call onStart hook only on the first run
       if (!processedCount) {
-        await this.#calllWithErrorMsg(
+        await this.#callWithErrorMsg(
           () => config.hooks?.onStart?.(job),
           'DistributedBatchProcessor onStart hook failed',
         );
@@ -297,7 +287,7 @@ export class DistributedBatchProcessor {
 
       try {
         // Call onStartBatch hook
-        await this.#calllWithErrorMsg(
+        await this.#callWithErrorMsg(
           () => config.hooks?.onStartBatch?.(job),
           'DistributedBatchProcessor onStartBatch hook failed',
         );
@@ -315,12 +305,12 @@ export class DistributedBatchProcessor {
           await config.processCallback(record, job);
         }
 
-        await this.#calllWithErrorMsg(
+        await this.#callWithErrorMsg(
           () => config.hooks?.onCompleteBatch?.(job),
           'DistributedBatchProcessor onCompleteBatch hook failed',
         );
       } catch (err) {
-        await this.#calllWithErrorMsg(
+        await this.#callWithErrorMsg(
           () => config.hooks?.onError?.(err, job),
           'DistributedBatchProcessor onError hook failed',
         );
@@ -346,7 +336,7 @@ export class DistributedBatchProcessor {
 
         if (shouldStop) {
           await this.#queue.removeJobScheduler(job.opts.jobId!);
-          this.#calllWithErrorMsg(
+          this.#callWithErrorMsg(
             () => config.hooks?.onComplete?.(job),
             'DistributedBatchProcessor onComplete hook failed on stop condition',
           );
@@ -356,7 +346,7 @@ export class DistributedBatchProcessor {
 
       // call at the end of run once
       if (job.opts.repeat?.limit === totalSlots) {
-        this.#calllWithErrorMsg(
+        this.#callWithErrorMsg(
           () => config.hooks?.onComplete?.(job),
           'DistributedBatchProcessor onComplete hook failed on the last slot',
         );

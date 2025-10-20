@@ -69,8 +69,8 @@ describe('DistributedBatchProcessor Integration Tests', () => {
         };
       },
       processCallback: async (item, job) => {
-        // TODO: provide slot
         // Track which slot processed this item
+        // Note: The slot is managed internally by the processor and available via job.data.slot
         const currentSlot = job.data.slot || 0;
         const existing = processedItems.find((p) => p.slot === currentSlot);
         if (existing) {

@@ -1,5 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Job, Queue } from 'bullmq';
 import { DistributedBatchProcessor } from '../../src/processors/distributed-batch-processor.js';
 import Redis from 'ioredis';
@@ -28,10 +27,8 @@ describe('DistributedBatchProcessor Integration Tests', () => {
 
     processor = new DistributedBatchProcessor({
       queue,
-      options: {
-        id: 'test-distributed-batch',
-        cycleTime: 'day',
-      },
+      id: 'test-distributed-batch',
+      cycleTime: 'day',
     });
   });
 
@@ -50,15 +47,16 @@ describe('DistributedBatchProcessor Integration Tests', () => {
       { id: 5, name: 'Item 5' },
     ];
 
-    // Track which items were processed in each slot
-    const processedItems: { slot: number; items: any[] }[] = [];
+    // Create mock functions to track calls
+    const mockProcessCallback = vi.fn();
 
     // Create the processor
     const fn = await processor.build({
-      dataCallback: ({ currentSlot, totalSlots }) => {
+      dataCallback: (slotContext) => {
         // Return items that belong to this slot (using modulo for distribution)
         const slotItems = testData.filter(
-          (_, index) => index % totalSlots === currentSlot,
+          (_, index) =>
+            index % slotContext.totalSlots === slotContext.currentSlot,
         );
         return {
           async *[Symbol.asyncIterator]() {
@@ -68,17 +66,7 @@ describe('DistributedBatchProcessor Integration Tests', () => {
           },
         };
       },
-      processCallback: async (item, job) => {
-        // Track which slot processed this item
-        // Note: The slot is managed internally by the processor and available via job.data.slot
-        const currentSlot = job.data.slot || 0;
-        const existing = processedItems.find((p) => p.slot === currentSlot);
-        if (existing) {
-          existing.items.push(item);
-        } else {
-          processedItems.push({ slot: currentSlot, items: [item] });
-        }
-      },
+      processCallback: mockProcessCallback,
     });
 
     // run the job 1x
@@ -99,6 +87,18 @@ describe('DistributedBatchProcessor Integration Tests', () => {
     expect(jobState.data.slot).toEqual(1);
     expect(jobState.data.processedCount).toEqual(1);
 
+    // Verify slotContext was passed correctly to processCallback
+    expect(mockProcessCallback).toHaveBeenCalledTimes(1);
+    expect(mockProcessCallback).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 1, name: 'Item 1' }),
+      {
+        currentSlot: 0,
+        totalSlots: 288, // 24 hours * 60 minutes * 60 seconds * 1000ms / (5 minutes * 60 seconds * 1000ms)
+        processedCount: 1,
+      },
+      expect.any(Object), // Job object
+    );
+
     await fn(
       new Job(
         queue,
@@ -115,5 +115,85 @@ describe('DistributedBatchProcessor Integration Tests', () => {
     }
     expect(jobState.data.slot).toEqual(2);
     expect(jobState.data.processedCount).toEqual(2);
+
+    // Verify slotContext was passed correctly to processCallback for second run
+    expect(mockProcessCallback).toHaveBeenCalledTimes(2);
+    expect(mockProcessCallback).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ id: 2, name: 'Item 2' }),
+      {
+        currentSlot: 1,
+        totalSlots: 288, // 24 hours * 60 minutes * 60 seconds * 1000ms / (5 minutes * 60 seconds * 1000ms)
+        processedCount: 2,
+      },
+      expect.any(Object), // Job object
+    );
+  });
+
+  it('should support stop condition with SlotContext', async () => {
+    // Test data - simple array of items to process
+    const testData = [
+      { id: 1, name: 'Item 1' },
+      { id: 2, name: 'Item 2' },
+      { id: 3, name: 'Item 3' },
+      { id: 4, name: 'Item 4' },
+      { id: 5, name: 'Item 5' },
+    ];
+
+    // Create mock functions to track calls
+    const mockProcessCallback = vi.fn();
+    const mockStopCondition = vi.fn().mockImplementation((slotContext) => {
+      // Stop after processing 2 items
+      return slotContext.processedCount >= 2;
+    });
+
+    // Create the processor
+    const fn = await processor.build({
+      dataCallback: (slotContext) => {
+        // Return items that belong to this slot (using modulo for distribution)
+        const slotItems = testData.filter(
+          (_, index) =>
+            index % slotContext.totalSlots === slotContext.currentSlot,
+        );
+        return {
+          async *[Symbol.asyncIterator]() {
+            for (const item of slotItems) {
+              yield item;
+            }
+          },
+        };
+      },
+      processCallback: mockProcessCallback,
+      stopCondition: mockStopCondition,
+    });
+
+    // run the job
+    await fn(
+      new Job(
+        queue,
+        'test-job-stop',
+        { cycleTime: 'day', totalSlots: 2 },
+        { repeat: { every: 1000 } },
+      ),
+    );
+
+    // Verify stop condition was called
+    expect(mockStopCondition).toHaveBeenCalled();
+    expect(mockProcessCallback).toHaveBeenCalled();
+
+    // Verify slotContext was passed correctly to processCallback
+    const processCallbackCalls = mockProcessCallback.mock.calls;
+    expect(processCallbackCalls.length).toBeGreaterThan(0);
+
+    processCallbackCalls.forEach((call, index) => {
+      const [item, slotContext, job] = call;
+      expect(slotContext).toEqual({
+        currentSlot: 0, // First slot
+        totalSlots: 288, // 24 hours * 60 minutes * 60 seconds * 1000ms / (5 minutes * 60 seconds * 1000ms)
+        processedCount: index + 1,
+      });
+      expect(item).toEqual(expect.objectContaining({ id: index + 1 }));
+      expect(job).toBeInstanceOf(Job);
+    });
   });
 });

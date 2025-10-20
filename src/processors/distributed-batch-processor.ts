@@ -8,6 +8,7 @@ import {
   type CycleTime,
 } from './slots/calculate-slots';
 import type { Logger } from '../logger';
+import { match } from 'ts-pattern';
 
 type BaseScheduleOptions = Omit<RepeatOptions, 'key' | 'every' | 'repeat'>;
 
@@ -48,15 +49,20 @@ export interface ScheduleOptions extends BaseScheduleOptions {
 }
 
 /**
- * Configuration for distributed batch job data.
+ * Context object containing slot information for distributed batch processing.
+ *
+ * This interface provides the necessary context for processors to understand
+ * which slot they should process and how to partition their data across
+ * the total number of available slots. It's used by data callbacks and
+ * stop conditions to make decisions about data processing and job termination.
  */
-export interface JobConfig extends Pick<ScheduleOptions, 'cycleTime'> {
-  /** The current slot number being processed. Automatically managed by the processor. */
-  slot?: number;
-  /** the number of items processed in this job run. Automatically managed by the processor. */
-  processedCount?: number;
-  /** The queue name for this job, used for stop condition processing. */
-  queueName?: string;
+export interface SlotContext {
+  /** The current slot number (0-based) that this job run should process */
+  currentSlot: number;
+  /** Total number of slots in the cycle - use for partitioning data */
+  totalSlots: number;
+  /** processing count for the current slot */
+  processedCount: number;
 }
 
 /**
@@ -96,28 +102,20 @@ export interface ProcessorConfig<
    * so each job run processes a different subset of the total dataset.
    */
   dataCallback: (
-    params: {
-      /** The current slot number (0-based) that this job run should process */
-      currentSlot: number;
-      /** Total number of slots in the cycle - use for partitioning data */
-      totalSlots: number;
-    },
+    slotContext: SlotContext,
     job: Job<JobData, unknown, JobName>,
   ) => AsyncIterable<ProcessorData> | Promise<AsyncIterable<ProcessorData>>;
   /** Function that processes each individual data item. */
   processCallback: (
     data: ProcessorData,
+    slotContext: SlotContext,
     job: Job<JobData, unknown, JobName>,
   ) => Promise<void>;
   /** Optional lifecycle hooks for monitoring processor state. */
   hooks?: LifecycleHooks<JobData, JobName>;
   /** Optional stop condition function that can terminate the job scheduler. */
   stopCondition?: (
-    context: {
-      processedCount: number;
-      currentSlot: number;
-      totalSlots: number;
-    },
+    context: SlotContext,
     job: Job<JobData, unknown, JobName>,
   ) => boolean | Promise<boolean>;
 }
@@ -130,9 +128,10 @@ export interface DistributedJobResult {
   processedCount: number;
 }
 
-interface DistributedBatchProcessorConstructorArgs {
-  queue: Queue;
-  options: ScheduleOptions;
+export type QueueName = string;
+
+interface DistributedBatchProcessorConstructorArgs extends ScheduleOptions {
+  queue: Queue | QueueName;
   logger?: Logger;
 }
 
@@ -150,22 +149,33 @@ interface DistributedBatchProcessorConstructorArgs {
  * the workload across 4 time windows.
  */
 export class DistributedBatchProcessor {
-  #queue: Queue;
   #scheduleOptions: ScheduleOptions;
   #logger?: Logger;
   #cacheKey: string;
+  #queue: Queue;
 
   constructor({
     queue,
-    options,
     logger,
+    ...options
   }: DistributedBatchProcessorConstructorArgs) {
-    this.#queue = queue;
+    this.#queue = match(queue)
+      .when(
+        (q) => q instanceof Queue,
+        (q) => q,
+      )
+      .otherwise((name) => new Queue(name));
+
     this.#scheduleOptions = options;
     this.#logger = logger;
     this.#cacheKey = `${this.#scheduleOptions.id}:slot-cache`;
   }
 
+  /**
+   * Retrieves the current batch job state from Redis cache.
+   *
+   * @returns A Zod parse result containing the current slot and processed count
+   */
   async getBatchJobState() {
     const redisClient = await this.#queue.client;
 
@@ -173,6 +183,12 @@ export class DistributedBatchProcessor {
     return CacheValue.safeParse(val === null ? {} : JSON.parse(val));
   }
 
+  /**
+   * Updates the batch job state in Redis cache.
+   *
+   * @param state - The new state containing slot and processed count
+   * @returns Promise that resolves when the state is saved
+   */
   async setBatchJobState(state: CacheValue) {
     const redisClient = await this.#queue.client;
     return redisClient.set(this.#cacheKey, JSON.stringify(state));
@@ -204,18 +220,16 @@ export class DistributedBatchProcessor {
    * // Create a processor instance
    * const processor = new DistributedBatchProcessor({
    *   queue,
-   *   options: {
-   *     id: 'user-notifications',
-   *     cycleTime: 'day',
-   *   },
+   *   id: 'user-notifications',
+   *   cycleTime: 'day',
    * });
    *
    * // Build the processor function
    * const processorFn = await processor.build({
-   *   dataCallback: ({ currentSlot, totalSlots }) => {
-   *     return fetchDataForSlot(currentSlot, totalSlots);
+   *   dataCallback: (slotContext) => {
+   *     return fetchDataForSlot(slotContext.currentSlot, slotContext.totalSlots);
    *   },
-   *   processCallback: async (user) => {
+   *   processCallback: async (user, slotContext) => {
    *     await sendNotificationEmail(user.email);
    *   },
    * });
@@ -224,18 +238,18 @@ export class DistributedBatchProcessor {
    * worker.add('user-notifications', processorFn);
    * ```
    */
-  async build<ProcessorData, JobData extends JobConfig, JobName extends string>(
+  async build<ProcessorData, JobData, JobName extends string>(
     config: ProcessorConfig<ProcessorData, JobData, JobName>,
   ): Promise<Processor<JobData, DistributedJobResult, JobName>> {
     let slot = 0;
     let processedCount = 0;
     const opts = this.#scheduleOptions;
-    const queue = this.#queue;
     const totalSlots = calculateTotalSlots(opts);
-
-    await this.setBatchJobState({ slot: 0, processedCount: 0 });
+    const queue = this.#queue;
     const everyMs = opts.everyMs ?? DEFAULT_CADENCE;
     const limit = opts.runOnce ? totalSlots : undefined;
+
+    await this.setBatchJobState({ slot: 0, processedCount: 0 });
 
     await queue.upsertJobScheduler(
       opts.id,
@@ -264,11 +278,6 @@ export class DistributedBatchProcessor {
         processedCount = 0;
       }
 
-      const totalSlots = calculateTotalSlots({
-        cycleTime: job.data.cycleTime,
-        everyMs,
-      });
-
       // Call onStart hook only on the first run
       if (!processedCount) {
         await this.#callWithErrorMsg(
@@ -296,13 +305,22 @@ export class DistributedBatchProcessor {
           {
             currentSlot: slot,
             totalSlots,
+            processedCount,
           },
           job,
         );
 
         for await (const record of dataIterable) {
           processedCount++;
-          await config.processCallback(record, job);
+          await config.processCallback(
+            record,
+            {
+              currentSlot: slot,
+              processedCount,
+              totalSlots,
+            },
+            job,
+          );
         }
 
         await this.#callWithErrorMsg(

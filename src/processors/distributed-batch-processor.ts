@@ -244,13 +244,15 @@ export class DistributedBatchProcessor {
     const totalSlots = calculateTotalSlots(opts);
 
     await this.setBatchJobState({ slot: 0, processedCount: 0 });
+    const everyMs = opts.everyMs ?? DEFAULT_CADENCE;
+    const limit = opts.runOnce ? totalSlots : undefined;
 
     await queue.upsertJobScheduler(
       opts.id,
       {
         ...opts,
-        every: opts.everyMs ?? DEFAULT_CADENCE,
-        limit: opts.runOnce ? totalSlots : undefined,
+        every: everyMs,
+        limit,
       },
       {
         data: {
@@ -261,13 +263,6 @@ export class DistributedBatchProcessor {
     );
 
     return async (job) => {
-      const everyMs = job.opts.repeat?.every;
-      if (!everyMs) {
-        throw new Error(
-          'DistributedBatchProcessor:build: Invalid job configuration, must provide `repeat.every` option',
-        );
-      }
-
       const result = await this.getBatchJobState();
 
       // if we can't get the cache value, set to default values so we get values on the next turn

@@ -69,8 +69,6 @@ export interface SlotContext {
  * Lifecycle hooks for distributed batch processor.
  */
 interface LifecycleHooks<JobData, JobName extends string = string> {
-  /** Called once when the processor starts its very first run (processedCount = 0) */
-  onStart?: (job: Job<JobData, unknown, JobName>) => Promise<void> | void;
   /** Called at the beginning of each batch/slot processing cycle */
   onStartBatch?: (job: Job<JobData, unknown, JobName>) => Promise<void> | void;
 
@@ -249,6 +247,8 @@ export class DistributedBatchProcessor {
     const everyMs = opts.everyMs ?? DEFAULT_CADENCE;
     const limit = opts.runOnce ? totalSlots : undefined;
 
+    // TODO: this should not overwrite any existing job state
+    // when it runs again. all job state needs to be stored in redis
     await this.setBatchJobState({ slot: 0, processedCount: 0 });
 
     await queue.upsertJobScheduler(
@@ -279,12 +279,6 @@ export class DistributedBatchProcessor {
       }
 
       // Call onStart hook only on the first run
-      if (!processedCount) {
-        await this.#callWithErrorMsg(
-          () => config.hooks?.onStart?.(job),
-          'DistributedBatchProcessor onStart hook failed',
-        );
-      }
 
       // cache the current slot in redis to preserve state between slots
       const setCache = (nextSlot: number, currentProcessedCount: number) => {

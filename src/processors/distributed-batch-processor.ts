@@ -14,7 +14,6 @@ type BaseScheduleOptions = Omit<RepeatOptions, 'key' | 'every' | 'repeat'>;
 
 const CacheValue = z.object({
   slot: z.number(),
-  processedCount: z.number(),
 });
 
 type CacheValue = z.infer<typeof CacheValue>;
@@ -193,6 +192,24 @@ export class DistributedBatchProcessor {
   }
 
   /**
+   * Returns a cache value if it exists otherwise sets it to the initial value
+   */
+  async #setupCacheState() {
+    const state = await this.getBatchJobState();
+    if (state.success) {
+      return state.data;
+    }
+    this.#logger?.debug({ error: state.error.message }, 'Invalid');
+
+    const initialState: CacheValue = {
+      slot: 0,
+    };
+
+    await this.setBatchJobState(initialState);
+    return initialState;
+  }
+
+  /**
    * A helper function to safely call a function and log any errors.
    * will not throw an error if the function fails.
    */
@@ -239,8 +256,6 @@ export class DistributedBatchProcessor {
   async build<ProcessorData, JobData, JobName extends string>(
     config: ProcessorConfig<ProcessorData, JobData, JobName>,
   ): Promise<Processor<JobData, DistributedJobResult, JobName>> {
-    let slot = 0;
-    let processedCount = 0;
     const opts = this.#scheduleOptions;
     const totalSlots = calculateTotalSlots(opts);
     const queue = this.#queue;
@@ -249,7 +264,6 @@ export class DistributedBatchProcessor {
 
     // TODO: this should not overwrite any existing job state
     // when it runs again. all job state needs to be stored in redis
-    await this.setBatchJobState({ slot: 0, processedCount: 0 });
 
     await queue.upsertJobScheduler(
       opts.id,
@@ -267,23 +281,13 @@ export class DistributedBatchProcessor {
     );
 
     return async (job) => {
-      const result = await this.getBatchJobState();
-
-      // if we can't get the cache value, set to default values so we get values on the next turn
-      if (result.success) {
-        slot = result.data.slot;
-        processedCount = result.data.processedCount;
-      } else {
-        slot = 0;
-        processedCount = 0;
-      }
-
-      // Call onStart hook only on the first run
+      // internal value to track processedCount per batch
+      let processedCount = 0;
+      const { slot } = await this.#setupCacheState();
 
       // cache the current slot in redis to preserve state between slots
-      const setCache = (nextSlot: number, currentProcessedCount: number) => {
+      const setCache = (nextSlot: number) => {
         return this.setBatchJobState({
-          processedCount: currentProcessedCount,
           slot: nextSlot,
         });
       };
@@ -328,12 +332,12 @@ export class DistributedBatchProcessor {
         );
 
         // Update cache with next slot after error
-        await setCache((slot + 1) % totalSlots, processedCount);
+        await setCache((slot + 1) % totalSlots);
         throw err;
       }
 
       // Update cache with next slot after successful processing
-      await setCache((slot + 1) % totalSlots, processedCount);
+      await setCache((slot + 1) % totalSlots);
 
       // Some processors may define an arbitrary stop condition
       if (config.stopCondition) {

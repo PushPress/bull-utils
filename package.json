@@ -1,5 +1,5 @@
 {
-  "name": "matador",
+  "name": "bull",
   "description": "High level APIs for bullmq",
   "version": "1.0.0",
   "type": "module",

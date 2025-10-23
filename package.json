@@ -1,6 +1,6 @@
 {
-  "name": "bull",
-  "description": "High level APIs for bullmq",
+  "name": "bull-utils",
+  "description": "Collection of utilities for bullmq",
   "version": "1.0.0",
   "type": "module",
   "exports": {
@@ -23,24 +23,24 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@eslint/js": "^9.35.0",
-    "@rslib/core": "^0.15.1",
-    "@types/node": "^22.18.10",
+    "@eslint/js": "^9.38.0",
+    "@rslib/core": "^0.16.1",
+    "@types/node": "^24.9.1",
     "bullmq": "^5.61.0",
-    "eslint": "^9.35.0",
-    "globals": "^16.3.0",
-    "ioredis": "^5.4.1",
+    "eslint": "^9.38.0",
+    "globals": "^16.4.0",
+    "ioredis": "^5.8.2",
     "prettier": "^3.6.2",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.43.0",
-    "vitest": "^3.2.4"
+    "typescript-eslint": "^8.46.2",
+    "vitest": "^4.0.1"
   },
   "peerDependencies": {
     "bullmq": "^5.61.0"
   },
   "private": true,
   "dependencies": {
-    "dd-trace": "^5.72.0",
+    "dd-trace": "^5.73.0",
     "ts-pattern": "^5.8.0",
     "zod": "^4.1.12"
   }

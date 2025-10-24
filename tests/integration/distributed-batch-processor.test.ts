@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Job, Queue } from 'bullmq';
-import { DistributedBatchProcessor } from '../../src/processors/distributed-batch-processor.js';
+import { DistributedBatchProcessor } from '../../src/index.js';
 import Redis from 'ioredis';
 
 describe('DistributedBatchProcessor Integration Tests', () => {
@@ -173,7 +173,7 @@ describe('DistributedBatchProcessor Integration Tests', () => {
     // Verify cache exists with slot 2
     let jobState = await processor.getBatchJobState();
     expect(jobState.success).toBe(true);
-    expect(jobState.data.slot).toEqual(2);
+    expect(jobState.data?.slot).toEqual(2);
 
     // run the job
     await fn(
@@ -213,7 +213,10 @@ describe('DistributedBatchProcessor Integration Tests', () => {
     ];
 
     // Set invalid cache data (missing required fields) by directly setting it in Redis
-    await redis.set('test-distributed-batch:slot-cache', JSON.stringify({ invalid: 'data' }));
+    await redis.set(
+      'test-distributed-batch:slot-cache',
+      JSON.stringify({ invalid: 'data' }),
+    );
 
     // Create mock functions to track calls
     const mockProcessCallback = vi.fn();
@@ -250,7 +253,7 @@ describe('DistributedBatchProcessor Integration Tests', () => {
     // Verify the cache was reset to valid state with slot 1 (0 -> 1 after processing)
     const jobState = await processor.getBatchJobState();
     expect(jobState.success).toBe(true);
-    expect(jobState.data.slot).toEqual(1);
+    expect(jobState.data?.slot).toEqual(1);
 
     // Verify slotContext used slot 0 (reset from invalid cache)
     expect(mockProcessCallback).toHaveBeenCalledTimes(1);

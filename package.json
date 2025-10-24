@@ -1,5 +1,5 @@
 {
-  "name": "bull-utils",
+  "name": "@pushpress/bull-utils",
   "description": "Collection of utilities for bullmq",
   "version": "1.0.0",
   "type": "module",

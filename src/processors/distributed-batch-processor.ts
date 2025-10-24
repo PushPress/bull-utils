@@ -69,19 +69,27 @@ export interface SlotContext {
  */
 interface LifecycleHooks<JobData, JobName extends string = string> {
   /** Called at the beginning of each batch/slot processing cycle */
-  onStartBatch?: (job: Job<JobData, unknown, JobName>) => Promise<void> | void;
+  onStartBatch?: (
+    job: Job<JobData, unknown, JobName>,
+    slotContext: SlotContext,
+  ) => Promise<void> | void;
 
   /** Called when the entire job scheduler completes (via stop condition or runOnce limit) */
-  onComplete?: (job: Job<JobData, unknown, JobName>) => Promise<void> | void;
+  onComplete?: (
+    job: Job<JobData, unknown, JobName>,
+    slotContext: SlotContext,
+  ) => Promise<void> | void;
   /** Called after successfully processing each batch/slot */
   onCompleteBatch?: (
     job: Job<JobData, unknown, JobName>,
+    slotContext: SlotContext,
   ) => Promise<void> | void;
 
   /** Called when an error occurs during batch processing */
   onError?: (
     err: unknown,
     job: Job<JobData, unknown, JobName>,
+    slotContext: SlotContext,
   ) => Promise<void> | void;
 }
 
@@ -262,9 +270,6 @@ export class DistributedBatchProcessor {
     const everyMs = opts.everyMs ?? DEFAULT_CADENCE;
     const limit = opts.runOnce ? totalSlots : undefined;
 
-    // TODO: this should not overwrite any existing job state
-    // when it runs again. all job state needs to be stored in redis
-
     await queue.upsertJobScheduler(
       opts.id,
       {
@@ -285,6 +290,12 @@ export class DistributedBatchProcessor {
       let processedCount = 0;
       const { slot } = await this.#setupCacheState();
 
+      const slotContext = {
+        currentSlot: slot,
+        totalSlots,
+        processedCount,
+      };
+
       // cache the current slot in redis to preserve state between slots
       const setCache = (nextSlot: number) => {
         return this.setBatchJobState({
@@ -295,39 +306,25 @@ export class DistributedBatchProcessor {
       try {
         // Call onStartBatch hook
         await this.#callWithErrorMsg(
-          () => config.hooks?.onStartBatch?.(job),
+          () => config.hooks?.onStartBatch?.(job, slotContext),
           'DistributedBatchProcessor onStartBatch hook failed',
         );
 
-        const dataIterable = await config.dataCallback(
-          {
-            currentSlot: slot,
-            totalSlots,
-            processedCount,
-          },
-          job,
-        );
+        const dataIterable = await config.dataCallback(slotContext, job);
 
         for await (const record of dataIterable) {
           processedCount++;
-          await config.processCallback(
-            record,
-            {
-              currentSlot: slot,
-              processedCount,
-              totalSlots,
-            },
-            job,
-          );
+          slotContext.processedCount = processedCount;
+          await config.processCallback(record, slotContext, job);
         }
 
         await this.#callWithErrorMsg(
-          () => config.hooks?.onCompleteBatch?.(job),
+          () => config.hooks?.onCompleteBatch?.(job, slotContext),
           'DistributedBatchProcessor onCompleteBatch hook failed',
         );
       } catch (err) {
         await this.#callWithErrorMsg(
-          () => config.hooks?.onError?.(err, job),
+          () => config.hooks?.onError?.(err, job, slotContext),
           'DistributedBatchProcessor onError hook failed',
         );
 
@@ -341,19 +338,12 @@ export class DistributedBatchProcessor {
 
       // Some processors may define an arbitrary stop condition
       if (config.stopCondition) {
-        const shouldStop = await config.stopCondition(
-          {
-            processedCount,
-            currentSlot: slot,
-            totalSlots,
-          },
-          job,
-        );
+        const shouldStop = await config.stopCondition(slotContext, job);
 
         if (shouldStop) {
           await this.#queue.removeJobScheduler(job.opts.jobId!);
           this.#callWithErrorMsg(
-            () => config.hooks?.onComplete?.(job),
+            () => config.hooks?.onComplete?.(job, slotContext),
             'DistributedBatchProcessor onComplete hook failed on stop condition',
           );
           return { processedCount };
@@ -363,7 +353,8 @@ export class DistributedBatchProcessor {
       // call at the end of run once
       if (job.opts.repeat?.limit === totalSlots) {
         this.#callWithErrorMsg(
-          () => config.hooks?.onComplete?.(job),
+          () => config.hooks?.onComplete?.(job, slotContext),
+
           'DistributedBatchProcessor onComplete hook failed on the last slot',
         );
       }

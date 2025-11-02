@@ -19,12 +19,36 @@ const CacheValue = z.object({
 type CacheValue = z.infer<typeof CacheValue>;
 
 /**
+ * Job data attached to scheduled jobs created by the distributed batch processor.
+ *
+ * This data is automatically set when creating the job scheduler and provides
+ * the processor with information about the distributed processing cycle structure.
+ * It's used internally to track slot progression and ensure consistent partitioning
+ * of work across multiple job runs.
+ *
+ * @property cycleTime - The cycle time configuration (e.g., 'day', 'hour') that
+ * determines how often the complete dataset should be processed. This defines
+ * the target frequency for cycling through all slots.
+ *
+ * @property totalSlots - The total number of slots in the processing cycle.
+ * Calculated based on the cycleTime and job cadence (everyMs). Jobs process
+ * data for one slot at a time, then move to the next slot, cycling from 0 to
+ * totalSlots-1 and repeating. This allows large datasets to be distributed
+ * across multiple time windows.
+ */
+export interface ScheduleJobData {
+  cycleTime: CycleTime;
+  totalSlots: number;
+}
+
+/**
  * Options for creating a distributed batch job scheduler.
  * Extends the RepeatOptions from BullMQ with additional configuration
  * for distributed processing including cycle time and execution limits.
  */
 export interface ScheduleOptions extends BaseScheduleOptions {
-  /** unique id for the batch job, if running multiple jobs on the same queue you must specify unique
+  /**
+   * unique id for the batch job, if running multiple jobs on the same queue you must specify unique
    * ids for each batch processor
    */
   id: string;
@@ -96,11 +120,7 @@ interface LifecycleHooks<JobData, JobName extends string = string> {
 /**
  * Configuration options for creating a distributed batch processor.
  */
-export interface ProcessorConfig<
-  ProcessorData,
-  JobData,
-  JobName extends string,
-> {
+export interface ProcessorConfig<ProcessorData, JobName extends string> {
   /**
    * Function that fetches data for processing based on the current slot.
    * Use currentSlot and totalSlots to partition your data (e.g., with MOD operations)
@@ -108,20 +128,20 @@ export interface ProcessorConfig<
    */
   dataCallback: (
     slotContext: SlotContext,
-    job: Job<JobData, unknown, JobName>,
+    job: Job<ScheduleJobData, unknown, JobName>,
   ) => AsyncIterable<ProcessorData> | Promise<AsyncIterable<ProcessorData>>;
   /** Function that processes each individual data item. */
   processCallback: (
     data: ProcessorData,
     slotContext: SlotContext,
-    job: Job<JobData, unknown, JobName>,
+    job: Job<ScheduleJobData, unknown, JobName>,
   ) => Promise<void>;
   /** Optional lifecycle hooks for monitoring processor state. */
-  hooks?: LifecycleHooks<JobData, JobName>;
+  hooks?: LifecycleHooks<ScheduleJobData, JobName>;
   /** Optional stop condition function that can terminate the job scheduler. */
   stopCondition?: (
     context: SlotContext,
-    job: Job<JobData, unknown, JobName>,
+    job: Job<ScheduleJobData, unknown, JobName>,
   ) => boolean | Promise<boolean>;
 }
 
@@ -261,9 +281,9 @@ export class DistributedBatchProcessor {
    * worker.add('user-notifications', processorFn);
    * ```
    */
-  async build<ProcessorData, JobData, JobName extends string>(
-    config: ProcessorConfig<ProcessorData, JobData, JobName>,
-  ): Promise<Processor<JobData, DistributedJobResult, JobName>> {
+  async build<ProcessorData, JobName extends string>(
+    config: ProcessorConfig<ProcessorData, JobName>,
+  ): Promise<Processor<ScheduleJobData, DistributedJobResult, JobName>> {
     const opts = this.#scheduleOptions;
     const totalSlots = calculateTotalSlots(opts);
     const queue = this.#queue;

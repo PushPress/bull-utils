@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LuaLS/lua-language-server/master/schema/luarc.json",
+  "runtime": {
+    "version": "Lua 5.1"
+  },
+  "diagnostics": {
+    "globals": ["redis", "KEYS", "ARGV"],
+    "disable": ["undefined-global"]
+  },
+  "workspace": {
+    "library": ["./lua"],
+    "checkThirdParty": false
+  },
+  "completion": {
+    "enable": true
+  },
+  "hint": {
+    "enable": true
+  }
+}

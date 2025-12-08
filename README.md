@@ -1,10 +1,13 @@
 # Bull Utils
 
-A collection of utilities for [BullMQ](https://github.com/OptimalBits/bullmq) that provides powerful distributed batch processing capabilities.
+A collection of utilities for [BullMQ](https://github.com/OptimalBits/bullmq) that provides powerful distributed batch processing and rate limiting capabilities.
 
 ## Overview
 
-Bull Utils provides a `DistributedBatchProcessor` that allows you to process large datasets in smaller, distributed batches over time. This prevents overwhelming your systems by cycling through numbered slots, where each job processes a different subset of your data.
+Bull Utils provides:
+
+- **DistributedBatchProcessor**: Process large datasets in smaller, distributed batches over time, preventing system overload by cycling through numbered slots.
+- **RateLimiter**: A Redis-backed distributed rate limiter using a fixed window algorithm, with support for grouped rate limiting by tenant, API key, or any custom key.
 
 ## Key Features
 
@@ -14,6 +17,8 @@ Bull Utils provides a `DistributedBatchProcessor` that allows you to process lar
 - **Lifecycle Hooks**: Built-in hooks for monitoring and error handling
 - **TypeScript Support**: Full TypeScript definitions and type safety
 - **Stop Conditions**: Custom logic to terminate job schedulers when needed
+- **Grouped Rate Limiting**: Redis-backed rate limiting with support for independent rate limits per group key (e.g., per tenant)
+- **BullMQ Integration**: Rate-limited processor wrapper that automatically delays jobs when rate limited
 
 ## Installation
 
@@ -155,3 +160,92 @@ dataCallback: async (slotContext) => {
 - **Setup**: 2016 slots (5-minute intervals over a week)
 - **Result**: Each customer gets a report once per week
 
+## Rate Limiting
+
+Bull Utils includes a distributed rate limiter that uses Redis for shared state, allowing you to enforce rate limits across multiple processes and servers.
+
+### RateLimiter
+
+The `RateLimiter` class implements a fixed window rate limiting algorithm. It uses Lua scripts for atomic operations, ensuring no race conditions when multiple processes attempt to acquire tokens simultaneously.
+
+```typescript
+import { RateLimiter } from 'bull-utils';
+import Redis from 'ioredis';
+
+const redis = new Redis();
+
+const rateLimiter = new RateLimiter({
+  redis,
+  limit: 100, // 100 requests
+  windowMs: 60000, // per minute
+  keyPrefix: 'myapp',
+});
+
+// Acquire a token (non-blocking)
+const result = await rateLimiter.acquire('tenant-123');
+if (result.acquired) {
+  console.log(`Token acquired! ${result.remainingTokens} tokens remaining`);
+  // Proceed with rate-limited operation
+} else {
+  console.log(`Rate limited. Retry in ${result.ttlSeconds} seconds`);
+  // Handle rate limit - wait or reject
+}
+
+// Check status without consuming a token
+const status = await rateLimiter.check('tenant-123');
+if (status.isLimited) {
+  console.log(`Rate limited, resets in ${status.resetInMs}ms`);
+} else {
+  console.log(`${status.remainingTokens} tokens available`);
+}
+
+// Reset a specific group's rate limit
+await rateLimiter.reset('tenant-123');
+```
+
+### Rate-Limited BullMQ Processor
+
+The `createRateLimitedProcessor` function wraps a BullMQ processor with rate limiting. When the rate limit is exceeded, the job is automatically moved to a delayed state and will be retried when the rate limit window resets.
+
+```typescript
+import { RateLimiter, createRateLimitedProcessor } from 'bull-utils';
+import { Queue, Worker } from 'bullmq';
+import Redis from 'ioredis';
+
+const redis = new Redis();
+
+// Create the rate limiter
+const rateLimiter = new RateLimiter({
+  redis,
+  limit: 10, // 10 API calls
+  windowMs: 1000, // per second
+});
+
+// Create a rate-limited processor
+const rateLimitedProcessor = createRateLimitedProcessor(
+  {
+    rateLimiter,
+    // Extract the group key from the job - rate limits are applied per group
+    groupKeyFn: (job) => job.data.tenantId ?? 'default',
+  },
+  // Your actual processing logic
+  async (job) => {
+    await callExternalAPI(job.data);
+    return { success: true };
+  },
+);
+
+// Use with a BullMQ worker
+const worker = new Worker('api-calls', rateLimitedProcessor, {
+  connection: redis,
+});
+```
+
+### Rate Limiting Features
+
+- **Fixed Window Algorithm**: Counts requests within discrete time windows
+- **Grouped Rate Limits**: Each group key (e.g., tenant ID) has independent rate limits
+- **Atomic Operations**: Uses Lua scripts to prevent race conditions under high concurrency
+- **BullMQ Integration**: Automatically delays and retries jobs when rate limited
+- **Status Checking**: Check rate limit status without consuming tokens
+- **Manual Reset**: Reset rate limits for specific groups when needed

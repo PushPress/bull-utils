@@ -127,7 +127,7 @@ const DEFAULT_KEY_PREFIX = "bull-utils";
  *   keyPrefix: 'myapp',
  * });
  *
- * // Blocking acquisition - waits if rate limited
+ * // Moves to delayed queue if rate limited
  * const result = await rateLimiter.acquire('tenant-123');
  * console.log(`Acquired, ${result.remainingTokens} tokens left`);
  *

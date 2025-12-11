@@ -188,7 +188,7 @@ if (result.acquired) {
   // Proceed with rate-limited operation
 } else {
   console.log(`Rate limited. Retry in ${result.ttlSeconds} seconds`);
-  // Handle rate limit - wait or reject
+  // Handle rate limit - move to delayed queue or reject
 }
 
 // Check status without consuming a token
@@ -208,23 +208,18 @@ await rateLimiter.reset('tenant-123');
 The `createRateLimitedProcessor` function wraps a BullMQ processor with rate limiting. When the rate limit is exceeded, the job is automatically moved to a delayed state and will be retried when the rate limit window resets.
 
 ```typescript
-import { RateLimiter, createRateLimitedProcessor } from 'bull-utils';
+import { createRateLimitedProcessor } from 'bull-utils';
 import { Queue, Worker } from 'bullmq';
 import Redis from 'ioredis';
 
 const redis = new Redis();
 
-// Create the rate limiter
-const rateLimiter = new RateLimiter({
-  redis,
-  limit: 10, // 10 API calls
-  windowMs: 1000, // per second
-});
-
 // Create a rate-limited processor
 const rateLimitedProcessor = createRateLimitedProcessor(
   {
-    rateLimiter,
+    redis,
+    limit: 10, // 10 API calls
+    windowMs: 1000, // per second
     // Extract the group key from the job - rate limits are applied per group
     groupKeyFn: (job) => job.data.tenantId ?? 'default',
   },

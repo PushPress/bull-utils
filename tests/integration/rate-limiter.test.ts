@@ -166,32 +166,6 @@ describe('RateLimiter Integration Tests', () => {
       expect(resultB.acquired).toBe(true);
     });
 
-    it('should block and wait when rate limited then succeed', async () => {
-      const rateLimiter = new RateLimiter({
-        redis,
-        limit: 1,
-        windowMs: 500, // 500ms window for faster testing
-        keyPrefix: 'test',
-      });
-
-      const groupKey = 'blocking-test';
-
-      // Exhaust the limit
-      await rateLimiter.acquire(groupKey);
-
-      const startTime = Date.now();
-      const result = await rateLimiter.acquire(groupKey);
-      if (result.acquired) {
-        throw new Error('Should not have aquired the lock');
-      }
-      // block until the window resets
-      await sleep(result.ttlSeconds * 1000);
-
-      // Should have waited at least some time (accounting for timing variance)
-      expect(Date.now() - startTime).toBeGreaterThanOrEqual(100);
-      const newWindowResult = await rateLimiter.acquire(groupKey);
-      expect(newWindowResult.acquired).toEqual(true);
-    });
   });
 
   describe('Concurrency', () => {

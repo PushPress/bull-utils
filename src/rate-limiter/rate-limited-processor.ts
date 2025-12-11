@@ -1,6 +1,7 @@
 import { DelayedError, type Job, type Processor } from "bullmq";
 import type { RateLimiterConfig } from "./rate-limiter";
 import { RateLimiter } from "./rate-limiter";
+import { dogstatsd } from "dd-trace";
 
 /**
  * Configuration for creating a rate-limited processor wrapper.
@@ -105,6 +106,14 @@ export function createRateLimitedProcessor<
           ? ttlSeconds * 1000
           : rateLimiter.getTimeUntilNextWindow();
       await job.moveToDelayed(Date.now() + waitMs, token);
+
+      // increment dogstatsd metric
+      dogstatsd.increment("bullmq.worker.rate-limited", 1, {
+        jobName: job.name,
+        queuName: job.queueName,
+        delay: waitMs,
+      });
+
       throw new DelayedError();
     }
 

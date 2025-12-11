@@ -45,8 +45,9 @@ export type RateLimitedCallback<JobData, JobName extends string> = (
  *
  * This function wraps your processing callback with rate limiting,
  * ensuring that the rate limit is acquired before each item is processed.
- * If the rate limit is exceeded, the wrapper will wait until a token
- * becomes available.
+ * If the rate limit is exceeded, the job is moved to the delayed queue
+ * and returns to the caller. The processor will retry the job when the
+ * rate limit window resets.
  *
  * This is designed to work with the `DistributedBatchProcessor` processCallback,
  * but can be used with any async processing function that follows the same signature.

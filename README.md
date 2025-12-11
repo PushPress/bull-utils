@@ -188,7 +188,7 @@ if (result.acquired) {
   // Proceed with rate-limited operation
 } else {
   console.log(`Rate limited. Retry in ${result.ttlSeconds} seconds`);
-  // Handle rate limit - wait or reject
+  // Handle rate limit - move to delayed queue or reject
 }
 
 // Check status without consuming a token

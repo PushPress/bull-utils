@@ -1,5 +1,6 @@
-import { DelayedError, type Job, type Processor } from 'bullmq';
-import type { RateLimiter } from './rate-limiter';
+import { DelayedError, type Job, type Processor } from "bullmq";
+import type { RateLimiterConfig } from "./rate-limiter";
+import { RateLimiter } from "./rate-limiter";
 
 /**
  * Configuration for creating a rate-limited processor wrapper.
@@ -11,10 +12,7 @@ import type { RateLimiter } from './rate-limiter';
 export interface RateLimitedProcessorConfig<
   JobData,
   JobName extends string = string,
-> {
-  /** The rate limiter instance to use for rate limiting */
-  rateLimiter: RateLimiter;
-
+> extends RateLimiterConfig {
   /**
    * Function to extract the group key from job and processor data.
    * The group key determines which rate limit bucket is used.
@@ -92,7 +90,9 @@ export function createRateLimitedProcessor<
   config: RateLimitedProcessorConfig<JobData, JobName>,
   callback: Processor<JobData, Result, JobName>,
 ): Processor<JobData, Result, JobName> {
-  const { rateLimiter, groupKeyFn } = config;
+  const { groupKeyFn, ..._config } = config;
+  const rateLimiter = new RateLimiter(_config);
+
   return async (job, token) => {
     // acquire a lock by group key
     const result = await rateLimiter.acquire(groupKeyFn(job));

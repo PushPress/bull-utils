@@ -1,15 +1,15 @@
-import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import type { Redis } from 'ioredis';
-import type { Logger } from '../logger';
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { Redis } from "ioredis";
+import type { Logger } from "../logger";
 
 /**
  * Get the directory path of the current module
  * Works in both ESM and CJS contexts
  */
 function getModuleDir(): string {
-  if (typeof __dirname !== 'undefined') {
+  if (typeof __dirname !== "undefined") {
     // CJS context
     return __dirname;
   }
@@ -27,11 +27,11 @@ function loadLuaScript(filename: string): string {
   // Try to find package root by going up from dist or src
   // dist/rate-limiter -> package root -> lua/rate-limiter
   // src/rate-limiter -> package root -> lua/rate-limiter
-  const packageRoot = join(moduleDir, '..', '..');
-  const luaDir = join(packageRoot, 'lua', 'rate-limiter');
+  const packageRoot = join(moduleDir, "..", "..");
+  const luaDir = join(packageRoot, "lua", "rate-limiter");
   const scriptPath = join(luaDir, filename);
 
-  return readFileSync(scriptPath, 'utf-8');
+  return readFileSync(scriptPath, "utf-8");
 }
 
 /**
@@ -96,7 +96,7 @@ export interface RateLimitStatus {
  *
  * Returns: [current_count, is_allowed (0 or 1), ttl_remaining]
  */
-const CHECK_AND_INCREMENT_SCRIPT = loadLuaScript('check-and-increment.lua');
+const CHECK_AND_INCREMENT_SCRIPT = loadLuaScript("check-and-increment.lua");
 
 /**
  * Lua script for checking rate limit status without incrementing.
@@ -106,9 +106,9 @@ const CHECK_AND_INCREMENT_SCRIPT = loadLuaScript('check-and-increment.lua');
  *
  * Returns: [current_count, ttl_remaining]
  */
-const CHECK_STATUS_SCRIPT = loadLuaScript('check-status.lua');
+const CHECK_STATUS_SCRIPT = loadLuaScript("check-status.lua");
 
-const DEFAULT_KEY_PREFIX = 'bull-utils';
+const DEFAULT_KEY_PREFIX = "bull-utils";
 
 /**
  * A Redis-backed global rate limiter using fixed window algorithm.
@@ -148,10 +148,10 @@ export class RateLimiter {
 
   constructor(config: RateLimiterConfig) {
     if (config.limit <= 0) {
-      throw new Error('limit must be positive');
+      throw new Error("limit must be positive");
     }
     if (config.windowMs <= 0) {
-      throw new Error('windowMs must be positive');
+      throw new Error("windowMs must be positive");
     }
 
     this.#redis = config.redis;
@@ -226,7 +226,7 @@ export class RateLimiter {
     if (isAllowed) {
       this.#logger?.debug(
         { groupKey, currentCount, limit: this.#limit },
-        'Rate limit token acquired',
+        "Rate limit token acquired",
       );
 
       return {
@@ -303,7 +303,7 @@ export class RateLimiter {
     const key = this.#getKey(groupKey);
     await this.#redis.del(key);
 
-    this.#logger?.debug({ groupKey }, 'Rate limit reset');
+    this.#logger?.debug({ groupKey }, "Rate limit reset");
   }
 
   /**

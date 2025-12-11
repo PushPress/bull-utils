@@ -15,6 +15,5 @@
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "verbatimModuleSyntax": true
-  },
-  "include": ["src"]
+  }
 }

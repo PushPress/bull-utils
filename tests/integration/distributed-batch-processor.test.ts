@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { Job, Queue } from 'bullmq';
-import { DistributedBatchProcessor } from '../../src/index.js';
-import Redis from 'ioredis';
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { Job, Queue } from "bullmq";
+import { DistributedBatchProcessor } from "../../src/index.js";
+import Redis from "ioredis";
 
-describe('DistributedBatchProcessor Integration Tests', () => {
+describe("DistributedBatchProcessor Integration Tests", () => {
   let redis: Redis;
   let queue: Queue;
   let processor: DistributedBatchProcessor;
@@ -11,8 +11,8 @@ describe('DistributedBatchProcessor Integration Tests', () => {
   beforeEach(async () => {
     // Create a new Redis connection for each test
     redis = new Redis({
-      host: process.env.REDIS_HOST || 'localhost',
-      port: parseInt(process.env.REDIS_PORT || '6379'),
+      host: process.env.REDIS_HOST || "localhost",
+      port: parseInt(process.env.REDIS_PORT || "6379"),
       db: 15, // Use a test database
       maxRetriesPerRequest: null,
     });
@@ -21,14 +21,14 @@ describe('DistributedBatchProcessor Integration Tests', () => {
     await redis.flushdb();
 
     // Create a test queue
-    queue = new Queue('test-distributed-batch', {
+    queue = new Queue("test-distributed-batch", {
       connection: redis,
     });
 
     processor = new DistributedBatchProcessor({
       queue,
-      id: 'test-distributed-batch',
-      cycleTime: 'day',
+      id: "test-distributed-batch",
+      cycleTime: "day",
     });
   });
 
@@ -37,14 +37,14 @@ describe('DistributedBatchProcessor Integration Tests', () => {
     await redis?.quit();
   });
 
-  it('should start with slot 0 when no cache exists and progress to next slot', async () => {
+  it("should start with slot 0 when no cache exists and progress to next slot", async () => {
     // Test data - simple array of items to process
     const testData = [
-      { id: 1, name: 'Item 1' },
-      { id: 2, name: 'Item 2' },
-      { id: 3, name: 'Item 3' },
-      { id: 4, name: 'Item 4' },
-      { id: 5, name: 'Item 5' },
+      { id: 1, name: "Item 1" },
+      { id: 2, name: "Item 2" },
+      { id: 3, name: "Item 3" },
+      { id: 4, name: "Item 4" },
+      { id: 5, name: "Item 5" },
     ];
 
     // Create mock functions to track calls
@@ -77,8 +77,8 @@ describe('DistributedBatchProcessor Integration Tests', () => {
     await fn(
       new Job(
         queue,
-        'test-job-1',
-        { cycleTime: 'day' },
+        "test-job-1",
+        { cycleTime: "day", totalSlots: 100 },
         { repeat: { every: 1000 } },
       ),
     );
@@ -86,16 +86,16 @@ describe('DistributedBatchProcessor Integration Tests', () => {
     // Verify the slot was updated in Redis (processedCount is in-memory only)
     jobState = await processor.getBatchJobState();
     if (!jobState.success) {
-      throw new Error('Job 1 state must be set');
+      throw new Error("Job 1 state must be set");
     }
     expect(jobState.data.slot).toEqual(1);
     // processedCount is not stored in Redis anymore
-    expect(jobState.data).not.toHaveProperty('processedCount');
+    expect(jobState.data).not.toHaveProperty("processedCount");
 
     // Verify slotContext was passed correctly to processCallback
     expect(mockProcessCallback).toHaveBeenCalledTimes(1);
     expect(mockProcessCallback).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 1, name: 'Item 1' }),
+      expect.objectContaining({ id: 1, name: "Item 1" }),
       {
         currentSlot: 0, // Started with slot 0
         totalSlots: 288, // 24 hours * 60 minutes * 60 seconds * 1000ms / (5 minutes * 60 seconds * 1000ms)
@@ -108,8 +108,8 @@ describe('DistributedBatchProcessor Integration Tests', () => {
     await fn(
       new Job(
         queue,
-        'test-job-2',
-        { cycleTime: 'day' },
+        "test-job-2",
+        { cycleTime: "day", totalSlots: 100 },
         { repeat: { every: 1000 } },
       ),
     );
@@ -117,7 +117,7 @@ describe('DistributedBatchProcessor Integration Tests', () => {
     // Verify the slot was updated again in Redis
     jobState = await processor.getBatchJobState();
     if (!jobState.success) {
-      throw new Error('Job 2 state must be set');
+      throw new Error("Job 2 state must be set");
     }
     expect(jobState.data.slot).toEqual(2);
 
@@ -125,7 +125,7 @@ describe('DistributedBatchProcessor Integration Tests', () => {
     expect(mockProcessCallback).toHaveBeenCalledTimes(2);
     expect(mockProcessCallback).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ id: 2, name: 'Item 2' }),
+      expect.objectContaining({ id: 2, name: "Item 2" }),
       {
         currentSlot: 1, // Used slot 1 from Redis
         totalSlots: 288,
@@ -135,14 +135,14 @@ describe('DistributedBatchProcessor Integration Tests', () => {
     );
   });
 
-  it('should use existing cache entry when slot is already set in Redis', async () => {
+  it("should use existing cache entry when slot is already set in Redis", async () => {
     // Test data - simple array of items to process
     const testData = [
-      { id: 1, name: 'Item 1' },
-      { id: 2, name: 'Item 2' },
-      { id: 3, name: 'Item 3' },
-      { id: 4, name: 'Item 4' },
-      { id: 5, name: 'Item 5' },
+      { id: 1, name: "Item 1" },
+      { id: 2, name: "Item 2" },
+      { id: 3, name: "Item 3" },
+      { id: 4, name: "Item 4" },
+      { id: 5, name: "Item 5" },
     ];
 
     // Pre-set a cache entry with slot 2
@@ -179,8 +179,8 @@ describe('DistributedBatchProcessor Integration Tests', () => {
     await fn(
       new Job(
         queue,
-        'test-job-existing-cache',
-        { cycleTime: 'day' },
+        "test-job-existing-cache",
+        { cycleTime: "day", totalSlots: 100 },
         { repeat: { every: 1000 } },
       ),
     );
@@ -188,14 +188,14 @@ describe('DistributedBatchProcessor Integration Tests', () => {
     // Verify the slot was updated to next slot (3)
     jobState = await processor.getBatchJobState();
     if (!jobState.success) {
-      throw new Error('Job state must be set');
+      throw new Error("Job state must be set");
     }
     expect(jobState.data.slot).toEqual(3);
 
     // Verify slotContext used the existing slot from Redis
     expect(mockProcessCallback).toHaveBeenCalledTimes(1);
     expect(mockProcessCallback).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 3, name: 'Item 3' }), // Item 3 because slot 2
+      expect.objectContaining({ id: 3, name: "Item 3" }), // Item 3 because slot 2
       {
         currentSlot: 2, // Used existing slot from Redis
         totalSlots: 288,
@@ -205,17 +205,17 @@ describe('DistributedBatchProcessor Integration Tests', () => {
     );
   });
 
-  it('should handle invalid cache data by resetting to slot 0', async () => {
+  it("should handle invalid cache data by resetting to slot 0", async () => {
     // Test data - simple array of items to process
     const testData = [
-      { id: 1, name: 'Item 1' },
-      { id: 2, name: 'Item 2' },
+      { id: 1, name: "Item 1" },
+      { id: 2, name: "Item 2" },
     ];
 
     // Set invalid cache data (missing required fields) by directly setting it in Redis
     await redis.set(
-      'test-distributed-batch:slot-cache',
-      JSON.stringify({ invalid: 'data' }),
+      "test-distributed-batch:slot-cache",
+      JSON.stringify({ invalid: "data" }),
     );
 
     // Create mock functions to track calls
@@ -244,8 +244,8 @@ describe('DistributedBatchProcessor Integration Tests', () => {
     await fn(
       new Job(
         queue,
-        'test-job-invalid-cache',
-        { cycleTime: 'day' },
+        "test-job-invalid-cache",
+        { cycleTime: "day", totalSlots: 100 },
         { repeat: { every: 1000 } },
       ),
     );
@@ -258,7 +258,7 @@ describe('DistributedBatchProcessor Integration Tests', () => {
     // Verify slotContext used slot 0 (reset from invalid cache)
     expect(mockProcessCallback).toHaveBeenCalledTimes(1);
     expect(mockProcessCallback).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 1, name: 'Item 1' }),
+      expect.objectContaining({ id: 1, name: "Item 1" }),
       {
         currentSlot: 0, // Reset to slot 0 due to invalid cache
         totalSlots: 288,
@@ -268,14 +268,14 @@ describe('DistributedBatchProcessor Integration Tests', () => {
     );
   });
 
-  it('should support stop condition with SlotContext', async () => {
+  it("should support stop condition with SlotContext", async () => {
     // Test data - simple array of items to process
     const testData = [
-      { id: 1, name: 'Item 1' },
-      { id: 2, name: 'Item 2' },
-      { id: 3, name: 'Item 3' },
-      { id: 4, name: 'Item 4' },
-      { id: 5, name: 'Item 5' },
+      { id: 1, name: "Item 1" },
+      { id: 2, name: "Item 2" },
+      { id: 3, name: "Item 3" },
+      { id: 4, name: "Item 4" },
+      { id: 5, name: "Item 5" },
     ];
 
     // Create mock functions to track calls
@@ -309,8 +309,8 @@ describe('DistributedBatchProcessor Integration Tests', () => {
     await fn(
       new Job(
         queue,
-        'test-job-stop',
-        { cycleTime: 'day', totalSlots: 2 },
+        "test-job-stop",
+        { cycleTime: "day", totalSlots: 2 },
         { repeat: { every: 1000 } },
       ),
     );

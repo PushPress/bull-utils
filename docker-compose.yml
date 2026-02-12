@@ -7,11 +7,11 @@ services:
       - redis-server
       - --appendonly yes
     ports:
-      - '6379:6379'
+      - "6379:6379"
     volumes:
-      - 'bullmq-redis:/data'
+      - "bullmq-redis:/data"
     healthcheck:
-      test: ['CMD-SHELL', 'redis-cli ping']
+      test: ["CMD-SHELL", "redis-cli ping"]
       interval: 10s
       timeout: 5s
       retries: 5

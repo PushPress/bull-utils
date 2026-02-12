@@ -1,17 +1,17 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import Redis from 'ioredis';
-import { RateLimiter } from '../../src/index.js';
-import { promisify } from 'util';
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import Redis from "ioredis";
+import { RateLimiter } from "../../src/index.js";
+import { promisify } from "util";
 
 const sleep = promisify(setTimeout);
 
-describe('RateLimiter Integration Tests', () => {
+describe("RateLimiter Integration Tests", () => {
   let redis: Redis;
 
   beforeEach(async () => {
     redis = new Redis({
-      host: process.env.REDIS_HOST || 'localhost',
-      port: parseInt(process.env.REDIS_PORT || '6379'),
+      host: process.env.REDIS_HOST || "localhost",
+      port: parseInt(process.env.REDIS_PORT || "6379"),
       db: 15, // Use a test database
       maxRetriesPerRequest: null,
     });
@@ -24,21 +24,21 @@ describe('RateLimiter Integration Tests', () => {
     await redis?.quit();
   });
 
-  describe.only('RateLimiter', () => {
-    it('should allow requests up to the limit', async () => {
+  describe.only("RateLimiter", () => {
+    it("should allow requests up to the limit", async () => {
       const rateLimiter = new RateLimiter({
         redis,
         limit: 3,
         windowMs: 60000,
-        keyPrefix: 'test',
+        keyPrefix: "test",
       });
 
-      const groupKey = 'test-group';
+      const groupKey = "test-group";
 
       // First 3 requests should succeed immediately
       const result1 = await rateLimiter.acquire(groupKey);
       if (!result1.acquired == true) {
-        throw new Error('Cannot acquire');
+        throw new Error("Cannot acquire");
       }
 
       expect(result1.remainingTokens).toBe(2);
@@ -46,28 +46,28 @@ describe('RateLimiter Integration Tests', () => {
 
       const result2 = await rateLimiter.acquire(groupKey);
       if (!result2.acquired == true) {
-        throw new Error('cannot acquire');
+        throw new Error("cannot acquire");
       }
       expect(result2.remainingTokens).toBe(1);
       expect(result2.currentCount).toBe(2);
 
       const result3 = await rateLimiter.acquire(groupKey);
       if (!result3.acquired == true) {
-        throw new Error('cannot acquire');
+        throw new Error("cannot acquire");
       }
       expect(result3.remainingTokens).toBe(0);
       expect(result3.currentCount).toBe(3);
     });
 
-    it('should check status without consuming a token', async () => {
+    it("should check status without consuming a token", async () => {
       const rateLimiter = new RateLimiter({
         redis,
         limit: 5,
         windowMs: 60000,
-        keyPrefix: 'test',
+        keyPrefix: "test",
       });
 
-      const groupKey = 'status-check';
+      const groupKey = "status-check";
 
       // Check initial status
       let status = await rateLimiter.check(groupKey);
@@ -87,15 +87,15 @@ describe('RateLimiter Integration Tests', () => {
       expect(status.remainingTokens).toBe(3);
     });
 
-    it('should report rate limited status when limit exceeded', async () => {
+    it("should report rate limited status when limit exceeded", async () => {
       const rateLimiter = new RateLimiter({
         redis,
         limit: 2,
         windowMs: 60000,
-        keyPrefix: 'test',
+        keyPrefix: "test",
       });
 
-      const groupKey = 'limited-check';
+      const groupKey = "limited-check";
 
       // Exhaust the limit
       await rateLimiter.acquire(groupKey);
@@ -109,15 +109,15 @@ describe('RateLimiter Integration Tests', () => {
       expect(status.resetInMs).toBeGreaterThan(0);
     });
 
-    it('should reset rate limit for a group', async () => {
+    it("should reset rate limit for a group", async () => {
       const rateLimiter = new RateLimiter({
         redis,
         limit: 2,
         windowMs: 60000,
-        keyPrefix: 'test',
+        keyPrefix: "test",
       });
 
-      const groupKey = 'reset-test';
+      const groupKey = "reset-test";
 
       // Exhaust the limit
       await rateLimiter.acquire(groupKey);
@@ -137,16 +137,16 @@ describe('RateLimiter Integration Tests', () => {
       expect(status.remainingTokens).toBe(2);
     });
 
-    it('should handle multiple group keys independently', async () => {
+    it("should handle multiple group keys independently", async () => {
       const rateLimiter = new RateLimiter({
         redis,
         limit: 2,
         windowMs: 60000,
-        keyPrefix: 'test',
+        keyPrefix: "test",
       });
 
-      const groupA = 'group-a';
-      const groupB = 'group-b';
+      const groupA = "group-a";
+      const groupB = "group-b";
 
       // Exhaust group A's limit
       await rateLimiter.acquire(groupA);
@@ -165,19 +165,18 @@ describe('RateLimiter Integration Tests', () => {
       const resultB = await rateLimiter.acquire(groupB);
       expect(resultB.acquired).toBe(true);
     });
-
   });
 
-  describe('Concurrency', () => {
-    it('should handle concurrent requests correctly', async () => {
+  describe("Concurrency", () => {
+    it("should handle concurrent requests correctly", async () => {
       const rateLimiter = new RateLimiter({
         redis,
         limit: 5,
         windowMs: 60000,
-        keyPrefix: 'test',
+        keyPrefix: "test",
       });
 
-      const groupKey = 'concurrent-test';
+      const groupKey = "concurrent-test";
 
       // Fire 5 concurrent requests
       const results = await Promise.all([
@@ -195,15 +194,15 @@ describe('RateLimiter Integration Tests', () => {
       expect(status.isLimited).toBe(true);
     });
 
-    it('should maintain atomicity under high concurrency', async () => {
+    it("should maintain atomicity under high concurrency", async () => {
       const rateLimiter = new RateLimiter({
         redis,
         limit: 5,
         windowMs: 60000,
-        keyPrefix: 'test',
+        keyPrefix: "test",
       });
 
-      const groupKey = 'high-concurrency-test';
+      const groupKey = "high-concurrency-test";
 
       // Fire 10 concurrent requests
       const promises = Array.from({ length: 10 }, () =>
@@ -220,5 +219,3 @@ describe('RateLimiter Integration Tests', () => {
     });
   });
 });
-
-

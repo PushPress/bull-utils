@@ -31,21 +31,21 @@ pnpm install bull-utils
 ### Basic Example
 
 ```typescript
-import { DistributedBatchProcessor } from 'bull-utils';
-import { Queue, Worker } from 'bullmq';
-import Redis from 'ioredis';
+import { DistributedBatchProcessor } from "bull-utils";
+import { Queue, Worker } from "bullmq";
+import Redis from "ioredis";
 
 // Create Redis connection
 const redis = new Redis();
 
 // Create a queue
-const queue = new Queue('user-notifications', { connection: redis });
+const queue = new Queue("user-notifications", { connection: redis });
 
 // Create the processor
 const processor = new DistributedBatchProcessor({
   queue,
-  id: 'user-notifications',
-  cycleTime: 'day', // Process all users once per day
+  id: "user-notifications",
+  cycleTime: "day", // Process all users once per day
   everyMs: 5 * 60 * 1000, // Run every 5 minutes
 });
 
@@ -67,19 +67,19 @@ const processorFn = await processor.build({
   },
   hooks: {
     onStartBatch: async (job) => {
-      console.log('Starting batch processing...');
+      console.log("Starting batch processing...");
     },
     onCompleteBatch: async (job) => {
-      console.log('Batch completed successfully');
+      console.log("Batch completed successfully");
     },
     onError: async (err, job) => {
-      console.error('Batch processing failed:', err);
+      console.error("Batch processing failed:", err);
     },
   },
 });
 
 // Use with BullMQ worker
-const worker = new Worker('user-notifications', processorFn, {
+const worker = new Worker("user-notifications", processorFn, {
   connection: redis,
 });
 ```
@@ -89,8 +89,8 @@ const worker = new Worker('user-notifications', processorFn, {
 ```typescript
 const processor = new DistributedBatchProcessor({
   queue,
-  id: 'data-migration',
-  cycleTime: 'week',
+  id: "data-migration",
+  cycleTime: "week",
   runOnce: true, // Run through all slots once and stop
 });
 
@@ -107,7 +107,7 @@ const processorFn = await processor.build({
   },
   hooks: {
     onComplete: async (job) => {
-      console.log('Migration completed!');
+      console.log("Migration completed!");
     },
   },
 });
@@ -169,8 +169,8 @@ Bull Utils includes a distributed rate limiter that uses Redis for shared state,
 The `RateLimiter` class implements a fixed window rate limiting algorithm. It uses Lua scripts for atomic operations, ensuring no race conditions when multiple processes attempt to acquire tokens simultaneously.
 
 ```typescript
-import { RateLimiter } from 'bull-utils';
-import Redis from 'ioredis';
+import { RateLimiter } from "bull-utils";
+import Redis from "ioredis";
 
 const redis = new Redis();
 
@@ -178,11 +178,11 @@ const rateLimiter = new RateLimiter({
   redis,
   limit: 100, // 100 requests
   windowMs: 60000, // per minute
-  keyPrefix: 'myapp',
+  keyPrefix: "myapp",
 });
 
 // Acquire a token (non-blocking)
-const result = await rateLimiter.acquire('tenant-123');
+const result = await rateLimiter.acquire("tenant-123");
 if (result.acquired) {
   console.log(`Token acquired! ${result.remainingTokens} tokens remaining`);
   // Proceed with rate-limited operation
@@ -192,7 +192,7 @@ if (result.acquired) {
 }
 
 // Check status without consuming a token
-const status = await rateLimiter.check('tenant-123');
+const status = await rateLimiter.check("tenant-123");
 if (status.isLimited) {
   console.log(`Rate limited, resets in ${status.resetInMs}ms`);
 } else {
@@ -200,7 +200,7 @@ if (status.isLimited) {
 }
 
 // Reset a specific group's rate limit
-await rateLimiter.reset('tenant-123');
+await rateLimiter.reset("tenant-123");
 ```
 
 ### Rate-Limited BullMQ Processor
@@ -208,9 +208,9 @@ await rateLimiter.reset('tenant-123');
 The `createRateLimitedProcessor` function wraps a BullMQ processor with rate limiting. When the rate limit is exceeded, the job is automatically moved to a delayed state and will be retried when the rate limit window resets.
 
 ```typescript
-import { createRateLimitedProcessor } from 'bull-utils';
-import { Queue, Worker } from 'bullmq';
-import Redis from 'ioredis';
+import { createRateLimitedProcessor } from "bull-utils";
+import { Queue, Worker } from "bullmq";
+import Redis from "ioredis";
 
 const redis = new Redis();
 
@@ -221,7 +221,7 @@ const rateLimitedProcessor = createRateLimitedProcessor(
     limit: 10, // 10 API calls
     windowMs: 1000, // per second
     // Extract the group key from the job - rate limits are applied per group
-    groupKeyFn: (job) => job.data.tenantId ?? 'default',
+    groupKeyFn: (job) => job.data.tenantId ?? "default",
   },
   // Your actual processing logic
   async (job) => {
@@ -231,7 +231,7 @@ const rateLimitedProcessor = createRateLimitedProcessor(
 );
 
 // Use with a BullMQ worker
-const worker = new Worker('api-calls', rateLimitedProcessor, {
+const worker = new Worker("api-calls", rateLimitedProcessor, {
   connection: redis,
 });
 ```

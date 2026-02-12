@@ -1,9 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Redis from "ioredis";
 import { RateLimiter } from "../../src/index.js";
-import { promisify } from "util";
-
-const sleep = promisify(setTimeout);
 
 describe("RateLimiter Integration Tests", () => {
   let redis: Redis;

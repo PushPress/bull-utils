@@ -1,7 +1,7 @@
 {
   "name": "@pushpress/bull-utils",
   "description": "Collection of utilities for bullmq",
-  "version": "1.1.4",
+  "version": "1.2.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [

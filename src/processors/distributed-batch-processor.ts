@@ -1,16 +1,17 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import * as z from 'zod/mini';
-import { Job, Queue } from 'bullmq';
-import type { RepeatOptions, Processor } from 'bullmq';
+import * as z from "zod/mini";
+import { Job, Queue } from "bullmq";
+import type { RepeatOptions, Processor } from "bullmq";
 import {
   calculateTotalSlots,
   DEFAULT_CADENCE,
   type CycleTime,
-} from './slots/calculate-slots';
-import type { Logger } from '../logger';
-import { match } from 'ts-pattern';
+} from "./slots/calculate-slots";
+export { psqlSlot } from "./slots/psql-slot";
+import type { Logger } from "../logger";
+import { match } from "ts-pattern";
 
-type BaseScheduleOptions = Omit<RepeatOptions, 'key' | 'every' | 'repeat'>;
+type BaseScheduleOptions = Omit<RepeatOptions, "key" | "every" | "repeat">;
 
 const CacheValue = z.object({
   slot: z.number(),
@@ -227,7 +228,7 @@ export class DistributedBatchProcessor {
     if (state.success) {
       return state.data;
     }
-    this.#logger?.debug({ error: state.error.message }, 'Invalid');
+    this.#logger?.debug({ error: state.error.message }, "Invalid");
 
     const initialState: CacheValue = {
       slot: 0,
@@ -327,7 +328,7 @@ export class DistributedBatchProcessor {
         // Call onStartBatch hook
         await this.#callWithErrorMsg(
           () => config.hooks?.onStartBatch?.(job, slotContext),
-          'DistributedBatchProcessor onStartBatch hook failed',
+          "DistributedBatchProcessor onStartBatch hook failed",
         );
 
         const dataIterable = await config.dataCallback(slotContext, job);
@@ -340,12 +341,12 @@ export class DistributedBatchProcessor {
 
         await this.#callWithErrorMsg(
           () => config.hooks?.onCompleteBatch?.(job, slotContext),
-          'DistributedBatchProcessor onCompleteBatch hook failed',
+          "DistributedBatchProcessor onCompleteBatch hook failed",
         );
       } catch (err) {
         await this.#callWithErrorMsg(
           () => config.hooks?.onError?.(err, job, slotContext),
-          'DistributedBatchProcessor onError hook failed',
+          "DistributedBatchProcessor onError hook failed",
         );
 
         // Update cache with next slot after error
@@ -364,7 +365,7 @@ export class DistributedBatchProcessor {
           await this.#queue.removeJobScheduler(job.opts.jobId!);
           this.#callWithErrorMsg(
             () => config.hooks?.onComplete?.(job, slotContext),
-            'DistributedBatchProcessor onComplete hook failed on stop condition',
+            "DistributedBatchProcessor onComplete hook failed on stop condition",
           );
           return { processedCount };
         }
@@ -375,7 +376,7 @@ export class DistributedBatchProcessor {
         this.#callWithErrorMsg(
           () => config.hooks?.onComplete?.(job, slotContext),
 
-          'DistributedBatchProcessor onComplete hook failed on the last slot',
+          "DistributedBatchProcessor onComplete hook failed on the last slot",
         );
       }
 

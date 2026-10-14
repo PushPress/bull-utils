@@ -28,7 +28,7 @@
     "prettier": "^3.6.2",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.2",
-    "vitest": "^4.0.1"
+    "vitest": "^4.1.0"
   },
   "peerDependencies": {
     "bullmq": "^5.61.0",

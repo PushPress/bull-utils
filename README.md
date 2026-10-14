@@ -1,7 +1,7 @@
 # Bull Utils
 
 > [!WARNING]
-> This repository moved into [PushPress-Services](https://github.com/PushPress/PushPress-Services) as `packages/bull-utils` on October 13, 2026. It is no longer maintained here.
+> This repository moved into [PushPress-Services](https://github.com/PushPress/PushPress-Services) as `packages/bull-utils` on October 14, 2026. It is no longer maintained here.
 
 A collection of utilities for [BullMQ](https://github.com/OptimalBits/bullmq) that provides powerful distributed batch processing and rate limiting capabilities.
 
